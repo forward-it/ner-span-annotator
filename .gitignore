@@ -1,0 +1,4 @@
+.idea
+ner_span_annotator.egg-info
+node_modules
+__pycache__
