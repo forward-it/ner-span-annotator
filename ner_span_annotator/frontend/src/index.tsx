@@ -1,10 +1,10 @@
 import React from "react"
 import ReactDOM from "react-dom"
-import MySpanComponent from "./MySpanComponent"
+import NerSpanAnnotator from "./NerSpanAnnotator";
 
 ReactDOM.render(
   <React.StrictMode>
-    <MySpanComponent />
+    <NerSpanAnnotator />
   </React.StrictMode>,
   document.getElementById("root")
 )

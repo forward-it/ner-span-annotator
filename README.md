@@ -5,7 +5,7 @@ Streamlit component that allows you to visualize and modify NER annotations
 ## Installation instructions
 
 ```sh
-pip install streamlit-custom-component
+pip install ner_span_annotator
 ```
 
 ## Usage instructions
@@ -13,9 +13,15 @@ pip install streamlit-custom-component
 ```python
 import streamlit as st
 
-from my_component import my_component
+from ner_span_annotator import ner_span_annotator
 
-value = my_component()
+spans = [
+    {"start_token": 3, "end_token": 6, "label": "ORG"},
+    {"start_token": 5, "end_token": 6, "label": "GPE"},
+]
+tokens = ["Welcome", "to", "the", "Bank", "of", "China", "."]
 
-st.write(value)
+result = ner_span_annotator(tokens=tokens, spans=spans, labels=["ORG", "GPE"])
+
+st.json(result)
 ```
