@@ -15,6 +15,6 @@ tokens = ["Welcome", "to", "the", "Bank", "of", "China", "."]
 
 # Create an instance of our component with a constant `name` arg, and
 # print its output value.
-num_clicks = ner_span_renderer(tokens=tokens, spans=spans)
+result = ner_span_renderer(tokens=tokens, spans=spans)
 
-st.markdown("You've clicked %s times!" % int(num_clicks))
+st.json(result)
