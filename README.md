@@ -2,7 +2,7 @@
 
 This Streamlit component enables you to visualize Named Entity Recognition (NER) annotations in the spaCy displacy span style. Additionally, it allows you to modify NER annotations interactively.
 
-![example.png](example.png)
+![https://github.com/forward-it/ner-span-annotator/raw/main/example.png](example.png)
 
 The implementation includes code partially ported from Python to React, based on the [spaCy repository](https://github.com/explosion/spaCy/tree/master/spacy/displacy).
 
