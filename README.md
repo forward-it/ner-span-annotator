@@ -1,11 +1,14 @@
-# ner-span-annotator
+# NER Span Annotator
+A Streamlit component for visualizing and modifying Named Entity Recognition (NER) annotations in the spaCy displacy span style. This tool is particularly useful for handling overlapping NER classes.
 
-This Streamlit component enables you to visualize Named Entity Recognition (NER) annotations in the spaCy displacy span style. Additionally, it allows you to modify NER annotations interactively.
+<img src="https://github.com/forward-it/ner-span-annotator/raw/main/example.png" width="220">
 
-![https://github.com/forward-it/ner-span-annotator/raw/main/example.png](example.png)
+### Key Features:
+- **Visualization**: Displays NER annotations in a clear and intuitive span style.
+- **Interactivity**: Allows you to modify NER annotations directly in the interface.
 
-The implementation includes code partially ported from Python to React, based on the [spaCy repository](https://github.com/explosion/spaCy/tree/master/spacy/displacy).
-
+The implementation leverages code partially ported from Python to React, inspired by the [spaCy repository](https://github.com/explosion/spaCy/tree/master/spacy/displacy).
+For more details about the spaCy span component, visit [this page](https://spacy.io/usage/visualizers#span).
 
 ## Installation instructions
 
