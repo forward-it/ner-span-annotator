@@ -14,7 +14,7 @@ else:
     _component_func = components.declare_component("ner_span_annotator", path=build_dir)
 
 
-def ner_span_annotator(name=None, tokens=None, spans=None, labels=None, key=None, default=0):
+def ner_span_annotator(name=None, tokens=None, spans=None, labels=None, options=None, key=None, default=0):
     """
     Create a new instance of "my_component", passing tokens and spans.
 
@@ -28,6 +28,8 @@ def ner_span_annotator(name=None, tokens=None, spans=None, labels=None, key=None
         List of spans with keys like {"start_token", "end_token", "label"}.
     labels : list[str] or None
         List of labels to work with.
+    options : dict or None
+        Additional options to pass to the component.
     key : str or None
         An optional key that uniquely identifies this component.
     default : Any
@@ -43,6 +45,7 @@ def ner_span_annotator(name=None, tokens=None, spans=None, labels=None, key=None
         tokens=tokens,
         spans=spans,
         labels=labels,
+        options=options,
         key=key,
         default=default
     )

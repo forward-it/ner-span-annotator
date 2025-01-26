@@ -7,7 +7,7 @@ long_description = (this_directory / "README.md").read_text()
 
 setuptools.setup(
     name="ner-span-annotator",
-    version="0.0.1",
+    version="0.1.1",
     author="Dmitry Yemelyanov",
     author_email="dmitry@forwardit.ai",
     description="Streamlit component that allows you to visualize and modify NER annotations",
