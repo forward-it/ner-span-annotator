@@ -5,15 +5,17 @@ import React, {
     useState,
 } from "react"
 import { Streamlit, withStreamlitConnection, ComponentProps } from "streamlit-component-lib"
-import { RiEditFill } from "react-icons/ri";
+import { RiEditFill } from "react-icons/ri"
 
+/** Each span references character offsets in the text. */
 export interface Span {
-    start_token: number
-    end_token: number
+    start_token: number    // inclusive
+    end_token: number      // exclusive
     label: string
     render_slot?: number
 }
 
+/** RendererOptions can still be passed in `args["options"]` if desired. */
 export interface RendererOptions {
     colors?: Record<string, string>
     top_offset?: number
@@ -26,48 +28,60 @@ export interface RendererOptions {
     }
 }
 
+/** Our local version tracks editing state. */
 interface EditableSpan extends Span {
     span_id: number
     editing?: boolean
     tempLabel?: string
 }
 
-interface TokenEntity {
+/** The entity info assigned to each “character.” */
+interface CharEntity {
     label: string
     span_id: number
     is_start: boolean
     render_slot: number
 }
 
-interface TokenMarkup {
-    text: string
+/** We store each character’s text, idx, and the list of entities overlapping it. */
+interface CharMarkup {
+    ch: string
     idx: number
-    entities: TokenEntity[]
+    entities: CharEntity[]
 }
 
-/** Sort spans, assign render_slot, and produce token-level info. */
-function assemblePerTokenInfo(tokens: string[], spans: EditableSpan[]): TokenMarkup[] {
+/**
+ * Sort spans (longer first if they start at the same char),
+ * assign `render_slot` so overlapping spans can stack,
+ * and produce per-character info for rendering.
+ */
+function assemblePerCharInfo(chars: string[], spans: EditableSpan[]): CharMarkup[] {
+    // Sort so that for the same start, longer spans get assigned higher slot
     spans.sort((a, b) => {
         const lenA = a.end_token - a.start_token
         const lenB = b.end_token - b.start_token
         const startDiff = a.start_token - b.start_token
         if (startDiff !== 0) return startDiff
         if (lenB !== lenA) return lenB - lenA
+        // Tiebreak: alphabetical label
         return a.label.localeCompare(b.label)
     })
-    // Reset each span's render slot
+
+    // Reset each span's render_slot
     spans.forEach(s => (s.render_slot = 0))
 
-    const perTokenInfo: TokenMarkup[] = []
-    for (let i = 0; i < tokens.length; i++) {
-        const token = tokens[i]
+    const out: CharMarkup[] = []
+    for (let i = 0; i < chars.length; i++) {
+        const ch = chars[i]
         const intersectingSpans: EditableSpan[] = []
-        const entities: TokenEntity[] = []
+        const entities: CharEntity[] = []
 
         for (const span of spans) {
             if (span.start_token <= i && i < span.end_token) {
                 const isStart = i === span.start_token
                 if (isStart) {
+                    // If this is the first span in this char, render_slot = 1
+                    // else +1 from the last intersecting
                     span.render_slot =
                         (intersectingSpans[intersectingSpans.length - 1]?.render_slot ?? 0) + 1
                 }
@@ -78,31 +92,36 @@ function assemblePerTokenInfo(tokens: string[], spans: EditableSpan[]): TokenMar
                     is_start: isStart,
                     render_slot: span.render_slot ?? 0,
                 })
-            } else {
-                span.render_slot = 0
             }
         }
-        perTokenInfo.push({ text: token, idx: i, entities })
+
+        out.push({
+            ch,
+            idx: i,
+            entities,
+        })
     }
-    return perTokenInfo
+    return out
 }
 
 let globalSpanCounter = 1
 
 function NerSpanAnnotator({ args }: ComponentProps) {
-    const tokens: string[] = args["tokens"] ?? []
+    // 1) Accept `text` (string) instead of `tokens`.
+    const text: string = args["text"] ?? ""
     const rawSpans: Span[] = args["spans"] ?? []
     const allowedLabels: string[] = args["labels"] ?? []
 
-    // Filter out any spans whose label isn't in allowedLabels
-    const filteredRawSpans = useMemo(
-        () => rawSpans.filter(s => allowedLabels.includes(s.label)),
-        [rawSpans, allowedLabels]
-    )
-
+    // 2) Use the same top_offset logic for layering lines.
     const options: RendererOptions = args["options"] ?? {}
-    const { top_offset = 40, span_label_offset = 20, top_offset_step = 17, colors = {} } = options
+    const {
+        top_offset = 40,
+        span_label_offset = 20,
+        top_offset_step = 17,
+        colors = {},
+    } = options
 
+    // Merge user-provided colors with defaults:
     const defaultColors: Record<string, string> = {
         ORG: "#7aecec",
         PRODUCT: "#bfeeb7",
@@ -126,39 +145,47 @@ function NerSpanAnnotator({ args }: ComponentProps) {
     const mergedColors = { ...defaultColors, ...colors }
     const defaultColor = "#ddd"
 
-    // Convert incoming spans → local EditableSpan
-    const toEditableSpans = useCallback((arr: Span[]): EditableSpan[] =>
-            arr.map(s => ({
-                ...s,
-                span_id: globalSpanCounter++,
-                editing: false,
-                tempLabel: s.label,
-            }))
-        , [])
+    // 3) Convert text → array of single characters
+    const charArray = useMemo(() => text.split(""), [text])
 
-    // Local spans state, derived from filteredRawSpans
+    // 4) Convert incoming spans → local EditableSpan
+    const toEditableSpans = useCallback(
+        (arr: Span[]): EditableSpan[] =>
+            arr
+                // Filter out if label is not in allowedLabels
+                .filter(s => allowedLabels.includes(s.label))
+                .map(s => ({
+                    ...s,
+                    span_id: globalSpanCounter++,
+                    editing: false,
+                    tempLabel: s.label,
+                })),
+        [allowedLabels]
+    )
+
+    // Local state
     const [componentSpans, setComponentSpans] = useState<EditableSpan[]>(() =>
-        toEditableSpans(filteredRawSpans)
+        toEditableSpans(rawSpans)
     )
 
-    // Recompute token info each render
-    const perTokenInfo = useMemo(
-        () => assemblePerTokenInfo(tokens, componentSpans),
-        [tokens, componentSpans]
+    // 5) Build per-character info for each render
+    const perCharInfo = useMemo(
+        () => assemblePerCharInfo(charArray, componentSpans),
+        [charArray, componentSpans]
     )
 
-    // Whenever local spans change, send them up to Streamlit
+    // 6) Whenever local spans change, send them up to Streamlit
     useEffect(() => {
-        const plainSpans = componentSpans.map(({ span_id, editing, tempLabel, ...rest }) => rest)
+        const plainSpans = componentSpans.map(({ span_id, editing, tempLabel, render_slot, ...rest }) => rest)
         Streamlit.setComponentValue(plainSpans)
     }, [componentSpans])
 
-    // Call setFrameHeight after each render
+    // 7) Re-size the iframe after each render
     useEffect(() => {
         Streamlit.setFrameHeight()
-    }, [perTokenInfo])
+    }, [perCharInfo])
 
-    // Edits/removes
+    // Editing logic
     const handleRemoveSpan = (span_id: number) => {
         setComponentSpans(prev => prev.filter(s => s.span_id !== span_id))
     }
@@ -167,8 +194,11 @@ function NerSpanAnnotator({ args }: ComponentProps) {
         setComponentSpans(prev =>
             prev.map(s => {
                 if (s.span_id === span_id) {
-                    // Toggling off => reset tempLabel if needed
-                    return { ...s, editing: !s.editing, tempLabel: s.editing ? s.label : s.tempLabel }
+                    return {
+                        ...s,
+                        editing: !s.editing,
+                        tempLabel: s.editing ? s.label : s.tempLabel,
+                    }
                 }
                 return s
             })
@@ -192,57 +222,104 @@ function NerSpanAnnotator({ args }: ComponentProps) {
         )
     }
 
-    // Adjust boundaries
-    const clamp = (val: number, minVal: number, maxVal: number) =>
-        Math.min(Math.max(val, minVal), maxVal)
-
-    const handleMoveStartTokenLeft = (span_id: number) => {
-        setComponentSpans(prev =>
-            prev.map(s => {
-                if (s.span_id === span_id) {
-                    const newStart = clamp(s.start_token - 1, 0, s.end_token - 1)
-                    return { ...s, start_token: newStart }
-                }
-                return s
-            })
-        )
-    }
-    const handleMoveStartTokenRight = (span_id: number) => {
-        setComponentSpans(prev =>
-            prev.map(s => {
-                if (s.span_id === span_id) {
-                    const newStart = clamp(s.start_token + 1, 0, s.end_token - 1)
-                    return { ...s, start_token: newStart }
-                }
-                return s
-            })
-        )
+    // 8) Adjust boundaries in single-char steps
+    function clamp(num: number, minN: number, maxN: number): number {
+        return Math.min(Math.max(num, minN), maxN)
     }
 
-    const handleMoveEndTokenRight = (span_id: number) => {
-        setComponentSpans(prev =>
-            prev.map(s => {
-                if (s.span_id === span_id) {
-                    const newEnd = clamp(s.end_token - 1, s.start_token + 1, tokens.length)
-                    return { ...s, end_token: newEnd }
-                }
-                return s
-            })
-        )
+    // ---------- Word-based boundary adjustments ----------
+    function isWhitespace(ch: string): boolean {
+        return /\s/.test(ch)
     }
-    const handleMoveEndTokenLeft = (span_id: number) => {
+
+    /** Move the start boundary left by one word. */
+    function moveStartLeft(s: EditableSpan): number {
+        if (s.start_token <= 0) return s.start_token
+        let i = s.start_token - 1
+        while (i > 0 && isWhitespace(text[i])) i--
+        while (i > 0 && !isWhitespace(text[i - 1])) i--
+        return Math.max(0, i)
+    }
+
+    /** Move the start boundary right by one word. */
+    function moveStartRight(s: EditableSpan): number {
+        if (s.start_token >= text.length - 1) return s.start_token
+        let i = s.start_token
+        const len = text.length
+        // skip current "word"
+        while (i < len && !isWhitespace(text[i])) i++
+        // skip whitespace
+        while (i < len && isWhitespace(text[i])) i++
+        if (i >= s.end_token) {
+            i = s.end_token - 1
+            if (i < 0) i = 0
+        }
+        return i
+    }
+
+    /** Move the end boundary left by one word. */
+    function moveEndLeft(s: EditableSpan): number {
+        if (s.end_token <= s.start_token + 1) return s.end_token
+        let i = s.end_token - 1
+        while (i > s.start_token && isWhitespace(text[i])) i--
+        while (i > s.start_token && !isWhitespace(text[i - 1])) i--
+        if (i <= s.start_token) i = s.start_token + 1
+        return i
+    }
+
+    /** Move the end boundary right by one word. */
+    function moveEndRight(s: EditableSpan): number {
+        if (s.end_token >= text.length) return s.end_token
+        let i = s.end_token
+        const len = text.length
+        // skip whitespace
+        while (i < len && isWhitespace(text[i])) i++
+        // skip next word
+        while (i < len && !isWhitespace(text[i])) i++
+        if (i <= s.start_token) i = s.start_token + 1
+        if (i > len) i = len
+        return i
+    }
+
+    const adjustStart = (span_id: number, dir: "left" | "right") => {
         setComponentSpans(prev =>
             prev.map(s => {
-                if (s.span_id === span_id) {
-                    const newEnd = clamp(s.end_token + 1, s.start_token + 1, tokens.length)
-                    return { ...s, end_token: newEnd }
+                if (s.span_id !== span_id) return s
+                let newStart = s.start_token
+                if (dir === "left") {
+                    newStart = moveStartLeft(s)
+                } else {
+                    newStart = moveStartRight(s)
                 }
-                return s
+                // clamp so we never invert start >= end
+                if (newStart >= s.end_token) {
+                    newStart = s.end_token - 1
+                    if (newStart < 0) newStart = 0
+                }
+                return { ...s, start_token: newStart }
             })
         )
     }
 
-    // Create new span on text selection
+    const adjustEnd = (span_id: number, dir: "left" | "right") => {
+        setComponentSpans(prev =>
+            prev.map(s => {
+                if (s.span_id !== span_id) return s
+                let newEnd = s.end_token
+                if (dir === "left") {
+                    newEnd = moveEndLeft(s)
+                } else {
+                    newEnd = moveEndRight(s)
+                }
+                if (newEnd <= s.start_token) {
+                    newEnd = s.start_token + 1
+                }
+                return { ...s, end_token: newEnd }
+            })
+        )
+    }
+
+    // 9) Create new span on highlight
     const handleMouseUp = () => {
         const sel = window.getSelection()
         if (!sel || sel.isCollapsed) return
@@ -254,23 +331,22 @@ function NerSpanAnnotator({ args }: ComponentProps) {
         const endParent = range.endContainer.parentElement
         if (!startParent || !endParent) return
 
-        const startIdx = parseInt(startParent.getAttribute("data-token-idx") ?? "-1", 10)
-        const endIdx = parseInt(endParent.getAttribute("data-token-idx") ?? "-1", 10)
+        // We store data-ch-idx on each character
+        const startIdx = parseInt(startParent.getAttribute("data-ch-idx") ?? "-1", 10)
+        const endIdx = parseInt(endParent.getAttribute("data-ch-idx") ?? "-1", 10)
         if (startIdx < 0 || endIdx < 0) return
 
         const spanStart = Math.min(startIdx, endIdx)
         const spanEnd = Math.max(startIdx, endIdx) + 1
-        if (spanEnd <= spanStart || spanEnd > tokens.length) return
+        if (spanEnd <= spanStart || spanEnd > charArray.length) return
 
-        // Just pick the first allowed label, or fallback
         const defaultLbl = allowedLabels.length ? allowedLabels[0] : "MISC"
-
         const newSpan: EditableSpan = {
             span_id: globalSpanCounter++,
             label: defaultLbl,
             start_token: spanStart,
             end_token: spanEnd,
-            editing: true,      // auto-open in edit mode
+            editing: true,
             tempLabel: defaultLbl,
         }
 
@@ -278,6 +354,7 @@ function NerSpanAnnotator({ args }: ComponentProps) {
         sel.removeAllRanges()
     }
 
+    // 10) Style block is basically the same, except we’re dealing with char-based logic
     const styleTag = (
         <style>
             {`
@@ -371,30 +448,35 @@ function NerSpanAnnotator({ args }: ComponentProps) {
         </style>
     )
 
+    // 11) Render each character in a <span data-ch-idx=...>.
+    // If no entities for that char, just output the char. If there are entities, draw the layered lines above it.
     return (
         <div style={{ lineHeight: 2.5, direction: "ltr" }} onMouseUp={handleMouseUp}>
             {styleTag}
-            {perTokenInfo.map((token, tokenIdx) => {
-                const sortedEntities = [...token.entities].sort((a, b) => a.render_slot - b.render_slot)
-                const isWhitespace = token.text.trim() === ""
+            {perCharInfo.map((charInfo, idx) => {
+                const sortedEntities = [...charInfo.entities].sort(
+                    (a, b) => a.render_slot - b.render_slot
+                )
+                const isWhitespace = charInfo.ch.trim() === ""
                 if (!sortedEntities.length || isWhitespace) {
-                    // Each token is rendered in a span with a data-token-idx,
-                    // so we can identify it on text selection.
+                    // Just render the single character with data-ch-idx
                     return (
-                        <span key={tokenIdx} className="token-wrap" data-token-idx={token.idx}>
-              {token.text}{" "}
-            </span>
+                        <span key={idx} className="token-wrap" data-ch-idx={charInfo.idx}>
+                            {charInfo.ch}
+                        </span>
                     )
                 }
 
+                // We have one or more spans covering this character.
+                // We'll do the same offset-based approach as the original code.
                 const totalHeight =
                     top_offset + span_label_offset + top_offset_step * (sortedEntities.length - 1)
 
                 return (
                     <span
-                        key={tokenIdx}
+                        key={idx}
                         className="token-wrap"
-                        data-token-idx={token.idx}
+                        data-ch-idx={charInfo.idx}
                         style={{
                             fontWeight: "bold",
                             display: "inline-block",
@@ -403,13 +485,14 @@ function NerSpanAnnotator({ args }: ComponentProps) {
                             marginRight: "2px",
                         }}
                     >
-            {token.text}
+                        {charInfo.ch}
                         {sortedEntities.map((entity, eIdx) => {
                             const color = mergedColors[entity.label.toUpperCase()] || defaultColor
                             const topPos = top_offset + top_offset_step * (entity.render_slot - 1)
 
                             const spanObj = componentSpans.find(s => s.span_id === entity.span_id)
                             if (!spanObj) {
+                                // Just draw the color line
                                 return (
                                     <span
                                         key={eIdx}
@@ -429,7 +512,7 @@ function NerSpanAnnotator({ args }: ComponentProps) {
 
                             return (
                                 <React.Fragment key={eIdx}>
-                                    {/* Horizontal slice */}
+                                    {/* Horizontal colored slice */}
                                     <span
                                         style={{
                                             background: color,
@@ -453,91 +536,95 @@ function NerSpanAnnotator({ args }: ComponentProps) {
                                                 position: "absolute",
                                             }}
                                         >
-                      <span
-                          className={`span-label ${isEditing ? "editing" : ""}`}
-                          style={{ background: color, position: "relative" }}
-                      >
-                        {/* In edit mode: vertical column of ↑ and ↓ on the left side */}
-                          <div className="extend-controls left-extend">
-                          <button
-                              className="extend-btn"
-                              onClick={() => handleMoveStartTokenLeft(spanObj.span_id)}
-                          >
-                            ←
-                          </button>
-                          <button
-                              className="extend-btn"
-                              onClick={() => handleMoveStartTokenRight(spanObj.span_id)}
-                          >
-                            →
-                          </button>
-                        </div>
+                                            {/* The "label bubble" we show only at the span start char */}
+                                            <span
+                                                className={`span-label ${isEditing ? "editing" : ""}`}
+                                                style={{ background: color, position: "relative" }}
+                                            >
+                                                {/* Left boundary arrows (only show if editing) */}
+                                                <div className="extend-controls left-extend">
+                                                    <button
+                                                        className="extend-btn"
+                                                        onClick={() => adjustStart(spanObj.span_id, "left")}
+                                                    >
+                                                        ←
+                                                    </button>
+                                                    <button
+                                                        className="extend-btn"
+                                                        onClick={() => adjustStart(spanObj.span_id, "right")}
+                                                    >
+                                                        →
+                                                    </button>
+                                                </div>
 
-                          {/* The label or dropdown */}
-                          {isEditing ? (
-                              <select
-                                  style={{ marginLeft: 6 }}
-                                  value={spanObj.tempLabel}
-                                  onChange={e => handleLabelChange(spanObj.span_id, e.target.value)}
-                              >
-                                  {allowedLabels.map(label => (
-                                      <option key={label} value={label}>
-                                          {label}
-                                      </option>
-                                  ))}
-                              </select>
-                          ) : (
-                              spanObj.label
-                          )}
-                          {/* Edit/Remove/Approve buttons */}
-                          <span className="span-buttons">
-                          {isEditing ? (
-                              <button
-                                  className="approve-btn"
-                                  onClick={() => handleApproveEdit(spanObj.span_id)}
-                              >
-                                  ✓
-                              </button>
-                          ) : (
-                              <>
-                                  <button
-                                      className="edit-btn"
-                                      onClick={() => handleEditToggle(spanObj.span_id)}
-                                  >
-                                      <RiEditFill />
-                                  </button>
-                                  <button
-                                      className="remove-btn"
-                                      onClick={() => handleRemoveSpan(spanObj.span_id)}
-                                  >
-                                      ✕
-                                  </button>
-                              </>
-                          )}
-                        </span>
+                                                {/* The label or dropdown */}
+                                                {isEditing ? (
+                                                    <select
+                                                        style={{ marginLeft: 6 }}
+                                                        value={spanObj.tempLabel}
+                                                        onChange={e =>
+                                                            handleLabelChange(spanObj.span_id, e.target.value)
+                                                        }
+                                                    >
+                                                        {allowedLabels.map(label => (
+                                                            <option key={label} value={label}>
+                                                                {label}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                ) : (
+                                                    spanObj.label
+                                                )}
 
-                          {/* Right side arrows */}
-                          <div className="extend-controls right-extend">
-                          <button
-                              className="extend-btn"
-                              onClick={() => handleMoveEndTokenRight(spanObj.span_id)}
-                          >
-                            ←
-                          </button>
-                          <button
-                              className="extend-btn"
-                              onClick={() => handleMoveEndTokenLeft(spanObj.span_id)}
-                          >
-                            →
-                          </button>
-                        </div>
-                      </span>
-                    </span>
+                                                {/* Edit/Remove/Approve buttons */}
+                                                <span className="span-buttons">
+                                                    {isEditing ? (
+                                                        <button
+                                                            className="approve-btn"
+                                                            onClick={() => handleApproveEdit(spanObj.span_id)}
+                                                        >
+                                                            ✓
+                                                        </button>
+                                                    ) : (
+                                                        <>
+                                                            <button
+                                                                className="edit-btn"
+                                                                onClick={() => handleEditToggle(spanObj.span_id)}
+                                                            >
+                                                                <RiEditFill />
+                                                            </button>
+                                                            <button
+                                                                className="remove-btn"
+                                                                onClick={() => handleRemoveSpan(spanObj.span_id)}
+                                                            >
+                                                                ✕
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </span>
+
+                                                {/* Right boundary arrows (only if editing) */}
+                                                <div className="extend-controls right-extend">
+                                                    <button
+                                                        className="extend-btn"
+                                                        onClick={() => adjustEnd(spanObj.span_id, "left")}
+                                                    >
+                                                        ←
+                                                    </button>
+                                                    <button
+                                                        className="extend-btn"
+                                                        onClick={() => adjustEnd(spanObj.span_id, "right")}
+                                                    >
+                                                        →
+                                                    </button>
+                                                </div>
+                                            </span>
+                                        </span>
                                     )}
                                 </React.Fragment>
                             )
                         })}
-          </span>
+                    </span>
                 )
             })}
         </div>
